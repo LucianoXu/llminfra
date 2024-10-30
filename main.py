@@ -1,10 +1,12 @@
 
 from llminfra import *
+from datasets import load_dataset
 
-def trainV3():
+def trainV1():
     train(
-    enc_input_path = 'tinystories_train_encoded.npy',
-    ckpt_folder = './tinystories/Basic',
+    ds = load_dataset("roneneldan/TinyStories", split='train'),
+    ckpt_folder = './tinystories/V1',
+    tokenizer_path='tinystories_tok.json',
 
     # model
     vocab_size = 10000,
@@ -17,19 +19,17 @@ def trainV3():
     residual_pdrop = None,
 
     # optimizer
-    lr_min = 2e-5, 
-    lr_max = 5e-4,
-    T_w = 5000,
-    T_c = 75000,
+    lr_min = 2e-4, 
+    lr_max = 4e-3,
+    T_c = 37500,
     weight_decay = 0.1, 
     betas = (0.9, 0.99), 
     eps = 1e-8,
     
     # training setting:
     load_ckpt = None,
-    valid_enc_input = 'tinystories_valid_encoded.npy',
     valid_interval = 1000,
-    batch_size = 16,
+    batch_size = 32,
     save_interval = 100000,
     max_grad_l2norm = None,
     proc_token_limit=327_680_000,
@@ -38,4 +38,4 @@ def trainV3():
 
 
 if __name__ == "__main__":
-    trainV3()
+    trainV1()

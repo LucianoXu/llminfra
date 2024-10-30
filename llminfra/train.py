@@ -3,70 +3,10 @@ from typing import Iterable, Optional, Callable, Type
 import torch
 from torch.optim.optimizer import Optimizer
 
-def cross_entropy_loss(logits: torch.FloatTensor, targets: torch.LongTensor) -> torch.Tensor:
-    max_logit = logits.max(dim=-1, keepdim=True).values
-    sub_logits = logits - max_logit
-
-    loss_matrix = torch.gather(sub_logits, -1, targets.unsqueeze(-1)).squeeze(-1) - torch.log(torch.exp(sub_logits).sum(-1))
-
-    return -torch.mean(loss_matrix)
-
-
-
-
-class AdamW(Optimizer):
-    def __init__(self, params, lr: float, weight_decay, betas: tuple[float, float], eps = 1e-8):
-        defaults = {'lr': lr, 'beta1': betas[0], 'beta2': betas[1], 'lam': weight_decay}
-        super().__init__(params, defaults)
-        self.epsilon = eps
-
-    def step(self, closure: Optional[Callable] = None):
-        loss = None if closure is None else closure()
-        for group in self.param_groups:
-            lr = group['lr']
-            beta1 = group['beta1']
-            beta2 = group['beta2']
-            lam = group['lam']
-
-            for p in group['params']:
-                if p.grad is None:
-                    continue
-
-                state = self.state[p]
-                grad = p.grad.data
-
-                if "m" not in state:
-                    state['m'] = torch.zeros_like(p.data)
-                    state['v'] = torch.zeros_like(p.data)
-                    state['t'] = 1
-                
-                m, v, t = state['m'], state['v'], state['t']
-                
-                m.mul_(beta1).add_(grad, alpha=1-beta1)
-                v.mul_(beta2).addcmul_(grad, grad, value=1-beta2)
-
-                lr_t = lr * (1-beta2**t)**0.5 / (1 - beta1**t)
-
-                p.data -= lr_t * m / (torch.sqrt(v) + self.epsilon)
-
-                p.data -= lr * lam * p.data
-
-                state['t'] = t + 1
-                
-
-        return loss
-
 
 import math
-def cosine_schedule(t, alpha_max, alpha_min, T_w, T_c):
-    if t < T_w:
-        return t/T_w * alpha_max
-    
-    elif t <= T_c:
-        return alpha_min + 0.5 * (1. + math.cos((t-T_w)/(T_c - T_w) * math.pi)) * (alpha_max - alpha_min)
-    
-    else:
-        return alpha_min
+
+from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
     
 def grad_clip(parameters: Iterable[torch.nn.Parameter], max_l2_norm: float):
     norms : list[float] = []
@@ -126,10 +66,14 @@ from .model import *
 import os
 import pathlib
 from torch.utils.tensorboard.writer import SummaryWriter
+from datasets import load_dataset, Dataset
+from tokenizers import Tokenizer
+from torch.optim.adamw import AdamW
 
 def train(
-        enc_input_path: str,
+        ds: Dataset,
         ckpt_folder: str,
+        tokenizer_path: str,
 
         # model
         vocab_size: int,
@@ -144,7 +88,6 @@ def train(
         # optimizer
         lr_min: float, 
         lr_max: float,
-        T_w: int, 
         T_c: int,
         weight_decay, 
         betas: tuple[float, float], 
@@ -179,8 +122,10 @@ def train(
 
     optimizer = AdamW(
         model.parameters(),
-        lr_min, weight_decay, betas, eps
+        lr = lr_max, betas = betas, weight_decay=weight_decay,
+        eps = eps
     )
+    scheduler = CosineAnnealingWarmRestarts(optimizer, T_0 = T_c, T_mult = 1, eta_min = lr_min) # type: ignore
 
     writer = SummaryWriter(ckpt_folder_path, flush_secs=5, max_queue=1)
 
@@ -189,31 +134,39 @@ def train(
     else:
         t = 1
 
-    data = np.load(enc_input_path, mmap_mode='r')
+
+    tokenizer = Tokenizer.from_file(tokenizer_path)
+    tokenizer.enable_padding(pad_id=tokenizer.token_to_id("<|endoftext|>"))
+    tokenizer.enable_truncation(max_length=context_length+1)
+
+    def load_examples():
+        next_batch = ds.shuffle().select(range(batch_size))['text']
+        enc = torch.tensor([enc.ids for enc in tokenizer.encode_batch_fast(next_batch)], dtype=torch.long, device=device)
+        inputs, targets = enc[:, :-1], enc[:, 1:]
+        return inputs, targets
+
 
     if valid_enc_input is not None:
         valid_data = np.load(valid_enc_input)
         valid_loss = None
+
+    criterion = torch.nn.CrossEntropyLoss()
 
     try:
         while True:
             optimizer.zero_grad()
             
             # set the learning rate
-            lr = cosine_schedule(t, 
-                alpha_max = lr_max,
-                alpha_min = lr_min, 
-                T_w = T_w, 
-                T_c = T_c)
-            
-            for p in optimizer.param_groups:
-                p['lr'] = lr
+            scheduler.step(t)
 
-            inputs, targets = np_loader(data, batch_size, context_length, device)
+            # get the learning rate
+            lr = optimizer.param_groups[0]['lr']
+
+            inputs, targets = load_examples()
 
             logits = model(inputs)
 
-            loss = cross_entropy_loss(logits, targets)  # type: ignore
+            loss = criterion(logits.reshape(-1, logits.size(-1)), targets.reshape(-1))
             loss.backward()
 
             if max_grad_l2norm:

@@ -168,20 +168,20 @@ class TransformerLM(nn.Module):
 
 # decoding
 
-from .BPETok import BPETok
 from tqdm import tqdm
+from tokenizers import Tokenizer
     
-def decode(model: torch.nn.Module, tokenizer: BPETok, 
+def decode(model: torch.nn.Module, tokenizer: Tokenizer, 
            prompt: str,
            max_len: int,
            T: float = 0.6,
            p_threshold: float = 0.95) -> str:
     # encoding
-    ls = tokenizer.encode(prompt)
+    ls = tokenizer.encode(prompt).ids
     inputs = torch.tensor([ls], dtype=torch.long, device = model.device)
     generated = torch.tensor([[]], dtype=torch.long, device = model.device)
 
-    EOT_id = tokenizer.special_token_ids['<|endoftext|>']
+    EOT_id = tokenizer.token_to_id('<|endoftext|>')
 
     for i in tqdm(range(len(ls), max_len)):
         output = model.forward(inputs)
