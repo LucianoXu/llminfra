@@ -67,6 +67,7 @@ import os
 import pathlib
 from torch.utils.tensorboard.writer import SummaryWriter
 from datasets import load_dataset, Dataset
+from torch.utils.data import DataLoader
 from tokenizers import Tokenizer
 from torch.optim.adamw import AdamW
 
@@ -139,9 +140,10 @@ def train(
     tokenizer.enable_padding(pad_id=tokenizer.token_to_id("<|endoftext|>"))
     tokenizer.enable_truncation(max_length=context_length+1)
 
-    def load_examples():
-        next_batch = ds.shuffle().select(range(batch_size))['text']
-        enc = torch.tensor([enc.ids for enc in tokenizer.encode_batch_fast(next_batch)], dtype=torch.long, device=device)
+    dataloader = DataLoader(ds, batch_size=batch_size, shuffle=True)
+
+    def load_examples(next_batch):
+        enc = torch.tensor([enc.ids for enc in tokenizer.encode_batch_fast(next_batch['text'])], dtype=torch.long, device=device)
         inputs, targets = enc[:, :-1], enc[:, 1:]
         return inputs, targets
 
@@ -162,7 +164,7 @@ def train(
             # get the learning rate
             lr = optimizer.param_groups[0]['lr']
 
-            inputs, targets = load_examples()
+            inputs, targets = load_examples(next(iter(dataloader)))
 
             logits = model(inputs)
 

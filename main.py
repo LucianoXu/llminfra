@@ -2,10 +2,10 @@
 from llminfra import *
 from datasets import load_dataset
 
-def trainV1():
+def trainV2():
     train(
     ds = load_dataset("roneneldan/TinyStories", split='train'),
-    ckpt_folder = './tinystories/V1',
+    ckpt_folder = './tinystories/V2',
     tokenizer_path='tinystories_tok.json',
 
     # model
@@ -38,4 +38,4 @@ def trainV1():
 
 
 if __name__ == "__main__":
-    trainV1()
+    trainV2()
