@@ -1,32 +1,9 @@
 
-from typing import Iterable, Optional, Callable, Type
+from typing import Iterable, Literal, Optional, Callable, Type
 import torch
 from torch.optim.optimizer import Optimizer
 
-
-import math
-
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
-    
-def grad_clip(parameters: Iterable[torch.nn.Parameter], max_l2_norm: float):
-    norms : list[float] = []
-
-    for p in parameters:
-        if p.grad is None:
-            continue
-        
-        norms.append(torch.norm(p.grad.data, p=2).item())
-
-
-    l2_norm = torch.norm(torch.tensor(norms))
-
-    if l2_norm > max_l2_norm:
-        coef = max_l2_norm / (l2_norm + 1e-6)
-        for p in parameters:
-            if p.grad is None:
-                continue
-            p.grad.data *= coef
-
     
 import numpy as np
 import random
@@ -70,6 +47,8 @@ from datasets import load_dataset, Dataset
 from torch.utils.data import DataLoader
 from tokenizers import Tokenizer
 from torch.optim.adamw import AdamW
+import elab
+from elab import ELab
 
 def train(
         ds: Dataset,
@@ -95,7 +74,7 @@ def train(
         eps = 1e-8,
         
         # training setting:
-        load_ckpt: Optional[str] = None,
+        ckpt_name: str|Literal['latest', 'none'] = 'none',
         valid_enc_input: Optional[str] = None,
         valid_interval: int = 1000,
         batch_size: int = 8,
@@ -107,8 +86,6 @@ def train(
         # other setting
         model_type: Type[torch.nn.Module] = TransformerLM
         ):
-    
-    ckpt_folder_path = pathlib.Path(ckpt_folder)
     
     model = model_type(
         vocab_size,
@@ -126,14 +103,24 @@ def train(
         lr = lr_max, betas = betas, weight_decay=weight_decay,
         eps = eps
     )
+
+    lab = ELab(
+        ckpt_folder, 
+        ckpt_name=ckpt_name,
+        model = model,
+        optimizer = optimizer,
+        default_states={
+            't': 1,
+            'proc_token': 0
+        }
+    )
+
+    t: int = lab.states['t']
+    proc_token: int = lab.states['proc_token']
+    
     scheduler = CosineAnnealingWarmRestarts(optimizer, T_0 = T_c, T_mult = 1, eta_min = lr_min) # type: ignore
 
-    writer = SummaryWriter(ckpt_folder_path, flush_secs=5, max_queue=1)
-
-    if load_ckpt is not None:
-        t = load_checkpoint(load_ckpt, model, optimizer)
-    else:
-        t = 1
+    writer = SummaryWriter(ckpt_folder, flush_secs=5, max_queue=1)
 
 
     tokenizer = Tokenizer.from_file(tokenizer_path)
@@ -171,21 +158,27 @@ def train(
             loss = criterion(logits.reshape(-1, logits.size(-1)), targets.reshape(-1))
             loss.backward()
 
+            # calculate and log the raw gradient norm
+            raw_grad_norm = elab.get_grad_norm(model)
+
             if max_grad_l2norm:
-                grad_clip(model.parameters(), max_grad_l2norm)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_l2norm)
 
             optimizer.step()
 
+            proc_token += context_length * batch_size
 
-            print(f"{ckpt_folder}\tStep {t}\ttokens: {t * context_length * batch_size:,}\tlr: {lr:.7f}\tloss: {loss.item():.3f}")
+
+            print(f"{ckpt_folder}\tStep {t}\ttokens: {proc_token:,}\tlr: {lr:.7f}\tloss: {loss.item():.3f}")
 
             log_loss = {
                 'train': loss.item()
             }
 
             if t % save_interval == 0:
-                print("Saving checkpoint...")
-                save_checkpoint(model, optimizer, t, ckpt_folder_path / f"{t}.pth")
+                lab.states['t'] = t
+                lab.states['proc_token'] = proc_token
+                lab.save('f"{t}.pth"')
 
             if valid_enc_input is not None and t % valid_interval == 0:
                 print("computing validation loss...")
@@ -208,17 +201,19 @@ def train(
                 model.train()
 
             writer.add_scalars('loss(step)', log_loss, t)
-            writer.add_scalars('loss(token)', log_loss, t * context_length * batch_size)
+            writer.add_scalars('loss(token)', log_loss, proc_token)
+            writer.add_scalar('raw_grad_norm', raw_grad_norm, t)
             writer.flush()
 
-            if proc_token_limit is not None and t * context_length * batch_size > proc_token_limit:
+            if proc_token_limit is not None and proc_token > proc_token_limit:
                 raise KeyboardInterrupt()
 
             t += 1
     
     except KeyboardInterrupt:
-        print("Saving checkpoint...")
-        save_checkpoint(model, optimizer, t, ckpt_folder_path / f"{t}.pth")
+        lab.states['t'] = t
+        lab.states['proc_token'] = proc_token
+        lab.save(f"{t}.pth")
         
     
     
