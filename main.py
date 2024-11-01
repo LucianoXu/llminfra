@@ -7,7 +7,7 @@ vocab_size = tok.max_token_value + 1
 
 def trainV6():
     train(
-    ds = load_dataset("roneneldan/TinyStories", split='train'),
+    ds = load_dataset("roneneldan/TinyStories", split='train').shuffle(),
     ckpt_folder = './ckpt/tinystories/V6',
 
     # model
@@ -18,7 +18,7 @@ def trainV6():
         dim = 512,
         num_heads = 16,
         d_ff = 2048,
-        device='cuda'
+        device='mps'
     ),
 
     context_length = 256,
@@ -32,7 +32,7 @@ def trainV6():
     eps = 1e-8,
     
     # training setting:
-    ckpt_name = 'latest',
+    load_version_name = 'none',
     batch_size = 32,
     save_interval = 37500,
     max_grad_l2norm = 1.0,

@@ -1,4 +1,5 @@
 
+from datetime import datetime
 from typing import Iterable, Literal, Optional, Callable, Type
 import random
 from tqdm import tqdm
@@ -83,7 +84,7 @@ def train(
         eps = 1e-8,
         
         # training setting:
-        ckpt_name: str|Literal['latest', 'none'] = 'none',
+        load_version_name: str|Literal['latest', 'none'] = 'none',
         batch_size: int = 8,
         save_interval: int = 10000,
         max_grad_l2norm: Optional[float] = None,
@@ -107,7 +108,7 @@ def train(
     # create/load the checkpoint
     lab = ELab(
         ckpt_folder, 
-        ckpt_name=ckpt_name,
+        version_name=load_version_name,
         model = model,
         optimizer = optimizer,
         default_states={
@@ -122,17 +123,18 @@ def train(
     # set the learning rate scheduler
     scheduler = CosineAnnealingWarmRestarts(optimizer, T_0 = T_c, T_mult = 1, eta_min = lr_min) # type: ignore
 
-    # create the tensorboard writer
-    writer = SummaryWriter(ckpt_folder, flush_secs=5, max_queue=1)
-
     # create the dataloader
     dataloader = DataLoader(ds, batch_size=batch_size, shuffle=True)    # type: ignore
     
     # create the loss function
     criterion = torch.nn.CrossEntropyLoss()
 
+    # tensorboard logger
+    writer = SummaryWriter(lab.folder_path)
+
     try:
-        for batch in tqdm(dataloader):            
+        for batch in tqdm(dataloader):
+                
             # set the learning rate
             scheduler.step(t)
 
@@ -171,7 +173,7 @@ def train(
             if t % save_interval == 0:
                 lab.states['t'] = t
                 lab.states['proc_token'] = proc_token
-                lab.save('f"{t}.pth"')
+                lab.save(str(t))
 
             writer.add_scalars('loss(step)', log_loss, t)
             writer.add_scalars('loss(token)', log_loss, proc_token)
@@ -187,7 +189,7 @@ def train(
     except KeyboardInterrupt:
         lab.states['t'] = t
         lab.states['proc_token'] = proc_token
-        lab.save(f"{t}.pth")
+        lab.save(str(t))
         
     
     
