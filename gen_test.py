@@ -10,6 +10,7 @@ def gen_test(
     dim = 512,
     num_heads = 16,
     d_ff = 2048,
+    device = 'mps'
 ):
     tokenizer = tiktoken.get_encoding('cl100k_base')
     model = TransformerLM(
@@ -19,7 +20,7 @@ def gen_test(
         dim=dim,
         num_heads=num_heads,
         d_ff=d_ff
-    )
+    ).to(device)
     lab = ELab(ckpt_folder, 'latest', model=model)
 
     prompt = "Once upon a time"
@@ -39,6 +40,7 @@ def gen_test_batched(
     dim = 512,
     num_heads = 16,
     d_ff = 2048,
+    device = 'mps'
 ):
     tokenizer = tiktoken.get_encoding('cl100k_base')
     model = TransformerLM(
@@ -48,7 +50,7 @@ def gen_test_batched(
         dim=dim,
         num_heads=num_heads,
         d_ff=d_ff
-    )
+    ).to(device)
     lab = ELab(ckpt_folder, 'latest', model=model)
 
     prompt = ["Once upon a time", "In a galaxy far far away", "It was a dark and stormy night", "It was the best of times, it was the worst of times"]
@@ -61,6 +63,6 @@ def gen_test_batched(
         print()
 
 if __name__ == "__main__":
-    # gen_test()
-    gen_test_batched()
+    gen_test(device='cpu')
+    # gen_test_batched()
 
