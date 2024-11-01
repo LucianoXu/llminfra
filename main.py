@@ -18,7 +18,7 @@ def trainV6():
         dim = 512,
         num_heads = 16,
         d_ff = 2048,
-        device='cpu'
+        device='cuda'
     ),
 
     context_length = 256,
@@ -32,7 +32,7 @@ def trainV6():
     eps = 1e-8,
     
     # training setting:
-    ckpt_name = 'none',
+    ckpt_name = 'latest',
     batch_size = 32,
     save_interval = 37500,
     max_grad_l2norm = 1.0,
