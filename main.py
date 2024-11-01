@@ -2,14 +2,12 @@
 from llminfra import *
 from datasets import load_dataset
 
-def trainV4():
+def trainV5():
     train(
     ds = load_dataset("roneneldan/TinyStories", split='train'),
-    ckpt_folder = './tinystories/V4',
-    tokenizer_path='tinystories_tok.json',
+    ckpt_folder = './tinystories/V5',
 
     # model
-    vocab_size = 10000,
     context_length = 256,
     num_layers = 4,
     dim = 512,
@@ -37,4 +35,4 @@ def trainV4():
 
 
 if __name__ == "__main__":
-    trainV4()
+    trainV5()

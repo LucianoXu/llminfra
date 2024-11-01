@@ -22,7 +22,6 @@ from elab import ELab
 
 import tiktoken
 
-
 def np_loader(x: np.ndarray, batch_size: int, context_length: int, device: str):
     r = [random.randint(0, x.size - context_length - 1) for _ in range(batch_size)]
     inputs = np.stack([x[id:id+context_length] for id in r])
@@ -71,10 +70,8 @@ def get_batched_inputs_targets(encodings: list[list[int]], context_length: int, 
 def train(
         ds: Dataset,
         ckpt_folder: str,
-        tokenizer_path: str,
 
         # model
-        vocab_size: int,
         context_length: int,
         num_layers: int,
         dim: int,
@@ -103,6 +100,13 @@ def train(
         model_type: Type[torch.nn.Module] = TransformerLM
         ):
     
+    # build tokenizer
+    tokenizer = tiktoken.get_encoding("cl100k_base")
+    PADDING_ID=tokenizer.eot_token
+
+    vocab_size = tokenizer.max_token_value + 1
+
+    # build model
     model = model_type(
         vocab_size,
         context_length,
@@ -114,12 +118,14 @@ def train(
         residual_pdrop
     ).to(device)
 
+    # build optimizer
     optimizer = AdamW(
         model.parameters(),
         lr = lr_max, betas = betas, weight_decay=weight_decay,
         eps = eps
     )
 
+    # create/load the checkpoint
     lab = ELab(
         ckpt_folder, 
         ckpt_name=ckpt_name,
@@ -134,15 +140,16 @@ def train(
     t: int = lab.states['t']
     proc_token: int = lab.states['proc_token']
     
+    # set the learning rate scheduler
     scheduler = CosineAnnealingWarmRestarts(optimizer, T_0 = T_c, T_mult = 1, eta_min = lr_min) # type: ignore
 
+    # create the tensorboard writer
     writer = SummaryWriter(ckpt_folder, flush_secs=5, max_queue=1)
 
-    tokenizer = Tokenizer.from_file(tokenizer_path)
-    PADDING_ID=tokenizer.token_to_id("<|endoftext|>")
-
+    # create the dataloader
     dataloader = DataLoader(ds, batch_size=batch_size, shuffle=True)    # type: ignore
     
+    # create the loss function
     criterion = torch.nn.CrossEntropyLoss()
 
     try:
@@ -153,7 +160,7 @@ def train(
             # get the learning rate
             lr = optimizer.param_groups[0]['lr']
 
-            encodings = [tokenizer.encode(text).ids for text in batch['text']]
+            encodings = [tokenizer.encode(text, allowed_special='all') for text in batch['text']]
 
             inputs, targets = get_batched_inputs_targets(encodings, context_length, PADDING_ID)
             inputs = torch.tensor(inputs, dtype=torch.long, device = device)
