@@ -5,7 +5,7 @@ from datasets import load_dataset
 def trainV5():
     train(
     ds = load_dataset("roneneldan/TinyStories", split='train'),
-    ckpt_folder = './tinystories/V5',
+    ckpt_folder = './ckpt/tinystories/V5',
 
     # model
     context_length = 256,
