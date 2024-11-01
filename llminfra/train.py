@@ -13,7 +13,7 @@ from datasets import load_dataset, Dataset
 from torch.utils.data import DataLoader
 from tokenizers import Tokenizer
 from torch.optim.adamw import AdamW
-from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
+from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.optim.optimizer import Optimizer
 
 import elab
@@ -120,7 +120,7 @@ def train(
     proc_token: int = lab.states['proc_token']
     
     # set the learning rate scheduler
-    scheduler = CosineAnnealingWarmRestarts(optimizer, T_0 = T_c, T_mult = 1, eta_min = lr_min) # type: ignore
+    scheduler = CosineAnnealingLR(optimizer, T_max = T_c, eta_min = lr_min) # type: ignore
 
     # create the tensorboard writer
     writer = SummaryWriter(ckpt_folder, flush_secs=5, max_queue=1)
@@ -176,6 +176,7 @@ def train(
             writer.add_scalars('loss(step)', log_loss, t)
             writer.add_scalars('loss(token)', log_loss, proc_token)
             writer.add_scalar('raw_grad_norm', raw_grad_norm, t)
+            writer.add_scalar('lr', lr, t)
             writer.flush()
 
             if proc_token_limit is not None and proc_token > proc_token_limit:

@@ -34,7 +34,7 @@ def trainV6():
     # training setting:
     ckpt_name = 'none',
     batch_size = 32,
-    save_interval = 100000,
+    save_interval = 37500,
     max_grad_l2norm = 1.0,
     # proc_token_limit=327_680_000,
     proc_token_limit=None
