@@ -7,36 +7,6 @@ from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
     
 import numpy as np
 import random
-def np_loader(x: np.ndarray, batch_size: int, context_length: int, device: str):
-    r = [random.randint(0, x.size - context_length - 1) for _ in range(batch_size)]
-    inputs = np.stack([x[id:id+context_length] for id in r])
-    targets = np.stack([x[id+1:id+context_length+1] for id in r])
-
-    return torch.tensor(inputs, dtype=torch.long, device = device), torch.tensor(targets, dtype=torch.long, device = device)
-    
-
-
-def save_checkpoint(model: torch.nn.Module, 
-                    optimizer: Optimizer, 
-                    iteration: int, 
-                    out):
-    
-    obj = {
-        'model_dict': model.state_dict(),
-        'optimizer_state': optimizer.state_dict(),
-        'iteration': iteration
-    }
-    torch.save(obj, out)
-
-def load_checkpoint(src, 
-                    model: torch.nn.Module, 
-                    optimizer: Optimizer):
-    obj = torch.load(src)
-
-    model.load_state_dict(obj['model_dict'])
-    optimizer.load_state_dict(obj['optimizer_state'])
-    return obj['iteration']
-
 
 
 from .model import *
@@ -49,6 +19,54 @@ from tokenizers import Tokenizer
 from torch.optim.adamw import AdamW
 import elab
 from elab import ELab
+
+import tiktoken
+
+
+def np_loader(x: np.ndarray, batch_size: int, context_length: int, device: str):
+    r = [random.randint(0, x.size - context_length - 1) for _ in range(batch_size)]
+    inputs = np.stack([x[id:id+context_length] for id in r])
+    targets = np.stack([x[id+1:id+context_length+1] for id in r])
+
+    return torch.tensor(inputs, dtype=torch.long, device = device), torch.tensor(targets, dtype=torch.long, device = device)
+        
+
+def get_batched_inputs_targets(encodings: list[list[int]], context_length: int, PADDING_ID: int):
+    '''
+    Transform a list of encodings into a batch of inputs and targets for self-supervised learning.
+    '''
+
+    # calculate the sequence length of this batch
+    encoding_len_max = max([len(encoding) for encoding in encodings])
+    batch_seq_len = min(encoding_len_max, context_length)
+
+    input_ids = []
+    targets = []
+    
+    for encoding in encodings:
+        encoding_len = len(encoding)
+        
+        # select a random part in the text
+        if encoding_len == 0:
+            input_id = [PADDING_ID] * batch_seq_len
+            target = [PADDING_ID] * batch_seq_len
+
+        elif encoding_len <= batch_seq_len:
+            padding_number = batch_seq_len - (encoding_len - 1)
+            input_id = encoding[:encoding_len-1] + [PADDING_ID] * padding_number
+            target = encoding[1:encoding_len] + [PADDING_ID] * padding_number
+
+        else:
+            id_start = random.randint(0, encoding_len - batch_seq_len - 1)
+            input_id = encoding[id_start: id_start + batch_seq_len]
+            target = encoding[id_start + 1: id_start + batch_seq_len + 1]
+
+        input_ids.append(input_id)
+        targets.append(target)
+        
+    return input_ids, targets
+
+
 
 def train(
         ds: Dataset,
@@ -75,8 +93,6 @@ def train(
         
         # training setting:
         ckpt_name: str|Literal['latest', 'none'] = 'none',
-        valid_enc_input: Optional[str] = None,
-        valid_interval: int = 1000,
         batch_size: int = 8,
         save_interval: int = 10000,
         max_grad_l2norm: Optional[float] = None,
@@ -122,36 +138,26 @@ def train(
 
     writer = SummaryWriter(ckpt_folder, flush_secs=5, max_queue=1)
 
-
     tokenizer = Tokenizer.from_file(tokenizer_path)
-    tokenizer.enable_padding(pad_id=tokenizer.token_to_id("<|endoftext|>"))
-    tokenizer.enable_truncation(max_length=context_length+1)
+    PADDING_ID=tokenizer.token_to_id("<|endoftext|>")
 
-    dataloader = DataLoader(ds, batch_size=batch_size, shuffle=True)
-
-    def load_examples(next_batch):
-        enc = torch.tensor([enc.ids for enc in tokenizer.encode_batch_fast(next_batch['text'])], dtype=torch.long, device=device)
-        inputs, targets = enc[:, :-1], enc[:, 1:]
-        return inputs, targets
-
-
-    if valid_enc_input is not None:
-        valid_data = np.load(valid_enc_input)
-        valid_loss = None
-
+    dataloader = DataLoader(ds, batch_size=batch_size, shuffle=True)    # type: ignore
+    
     criterion = torch.nn.CrossEntropyLoss()
 
     try:
-        while True:
-            optimizer.zero_grad()
-            
+        for batch in tqdm(dataloader):            
             # set the learning rate
             scheduler.step(t)
 
             # get the learning rate
             lr = optimizer.param_groups[0]['lr']
 
-            inputs, targets = load_examples(next(iter(dataloader)))
+            encodings = [tokenizer.encode(text).ids for text in batch['text']]
+
+            inputs, targets = get_batched_inputs_targets(encodings, context_length, PADDING_ID)
+            inputs = torch.tensor(inputs, dtype=torch.long, device = device)
+            targets = torch.tensor(targets, dtype=torch.long, device = device)
 
             logits = model(inputs)
 
@@ -165,6 +171,7 @@ def train(
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_l2norm)
 
             optimizer.step()
+            optimizer.zero_grad()
 
             proc_token += context_length * batch_size
 
@@ -179,26 +186,6 @@ def train(
                 lab.states['t'] = t
                 lab.states['proc_token'] = proc_token
                 lab.save('f"{t}.pth"')
-
-            if valid_enc_input is not None and t % valid_interval == 0:
-                print("computing validation loss...")
-                model.eval()
-
-                valid_loss = 0.
-                rounds = 256
-                with torch.no_grad():
-                    for _ in tqdm(range(rounds), desc='Validating'):
-                        inputs, targets = np_loader(valid_data, batch_size, context_length, device)
-
-                        logits = model(inputs)
-
-                        valid_loss += cross_entropy_loss(logits, targets).item() # type: ignore
-                avg_loss = valid_loss / rounds
-
-                print('Validation Loss: ', avg_loss)
-
-                log_loss['validation'] = avg_loss
-                model.train()
 
             writer.add_scalars('loss(step)', log_loss, t)
             writer.add_scalars('loss(token)', log_loss, proc_token)
