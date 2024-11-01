@@ -2,10 +2,10 @@
 from llminfra import *
 from datasets import load_dataset
 
-def trainV5():
+def trainV1():
     train(
-    ds = load_dataset("roneneldan/TinyStories", split='train'),
-    ckpt_folder = './tinystories/V5',
+    ds = load_dataset("wikimedia/wikipedia", "20231101.ja", split="train"),
+    ckpt_folder = './ckpt/wikija/V1',
 
     # model
     context_length = 256,
@@ -35,4 +35,4 @@ def trainV5():
 
 
 if __name__ == "__main__":
-    trainV5()
+    trainV1()
