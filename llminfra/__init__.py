@@ -1,2 +1,2 @@
-from .model import *
+from .models import *
 from .train import *

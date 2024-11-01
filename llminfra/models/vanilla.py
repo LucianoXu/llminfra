@@ -109,7 +109,7 @@ class TransformerBlock(nn.Module):
         return temp_x + x2
     
 
-class TransformerLM(nn.Module):
+class Vanilla(nn.Module):
     def __init__(self, vocab_size: int,
                  context_length: int,
                  num_layers: int,
@@ -163,63 +163,3 @@ class TransformerLM(nn.Module):
         x = self.linear(self.rmsnorm(x))
 
         return x
-
-
-
-# decoding
-
-from tqdm import tqdm
-from tokenizers import Tokenizer
-    
-def decode(model: torch.nn.Module, tokenizer: Tokenizer, 
-           prompt: str,
-           max_len: int,
-           T: float = 0.6,
-           p_threshold: float = 0.95) -> str:
-    # encoding
-    ls = tokenizer.encode(prompt).ids
-    inputs = torch.tensor([ls], dtype=torch.long, device = model.device)
-    generated = torch.tensor([[]], dtype=torch.long, device = model.device)
-
-    EOT_id = tokenizer.token_to_id('<|endoftext|>')
-
-    for i in tqdm(range(len(ls), max_len)):
-        output = model.forward(inputs)
-        logits = output[:, -1, :]
-        logits = logits / T
-        probs = softmax(logits, dim=-1)
-        next_token = sample_top_p(probs, p_threshold)
-        inputs = torch.cat([inputs, next_token], dim=-1)
-        generated = torch.cat([generated, next_token], dim=-1)
-        if next_token == EOT_id:
-            break
-    
-    # decoding
-    gen_ls = generated[0].tolist()
-    text = tokenizer.decode(gen_ls)
-    return text
-        
-
-def sample_top_p(probs, p):
-    """
-    Perform top-p (nucleus) sampling on a probability distribution.
-
-    Args:
-        probs (torch.Tensor): Probability distribution tensor.
-        p (float): Probability threshold for top-p sampling.
-
-    Returns:
-        torch.Tensor: Sampled token indices.
-
-    Note:
-        Top-p sampling selects the smallest set of tokens whose cumulative probability mass
-        exceeds the threshold p. The distribution is renormalized based on the selected tokens.
-    """
-    probs_sort, probs_idx = torch.sort(probs, dim=-1, descending=True)
-    probs_sum = torch.cumsum(probs_sort, dim=-1)
-    mask = probs_sum - probs_sort > p
-    probs_sort[mask] = 0.0
-    probs_sort.div_(probs_sort.sum(dim=-1, keepdim=True))
-    next_token = torch.multinomial(probs_sort, num_samples=1)
-    next_token = torch.gather(probs_idx, -1, next_token)
-    return next_token
