@@ -1,26 +1,26 @@
 
+from datetime import datetime
 from typing import Iterable, Literal, Optional, Callable, Type
-import torch
-from torch.optim.optimizer import Optimizer
-
-from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
+import random
+from tqdm import tqdm
     
 import numpy as np
-import random
 
+import tiktoken
 
-from .model import *
-import os
-import pathlib
+import torch
 from torch.utils.tensorboard.writer import SummaryWriter
 from datasets import load_dataset, Dataset
 from torch.utils.data import DataLoader
 from tokenizers import Tokenizer
 from torch.optim.adamw import AdamW
+from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
+from torch.optim.optimizer import Optimizer
+
 import elab
+from .models import *
 from elab import ELab
 
-import tiktoken
 
 def np_loader(x: np.ndarray, batch_size: int, context_length: int, device: str):
     r = [random.randint(0, x.size - context_length - 1) for _ in range(batch_size)]
@@ -71,14 +71,9 @@ def train(
         ds: Dataset,
         ckpt_folder: str,
 
-        # model
+        model: torch.nn.Module,
+
         context_length: int,
-        num_layers: int,
-        dim: int,
-        num_heads: int,
-        d_ff: int,
-        attn_pdrop: float|None, 
-        residual_pdrop: float|None,
 
         # optimizer
         lr_min: float, 
@@ -89,34 +84,19 @@ def train(
         eps = 1e-8,
         
         # training setting:
-        ckpt_name: str|Literal['latest', 'none'] = 'none',
+        load_version_name: str|Literal['latest', 'none'] = 'none',
         batch_size: int = 8,
         save_interval: int = 10000,
         max_grad_l2norm: Optional[float] = None,
-        proc_token_limit: Optional[int] = None,
-        device = 'cpu',
-
-        # other setting
-        model_type: Type[torch.nn.Module] = TransformerLM
+        proc_token_limit: Optional[int] = None
         ):
     
     # build tokenizer
     tokenizer = tiktoken.get_encoding("cl100k_base")
     PADDING_ID=tokenizer.eot_token
 
-    vocab_size = tokenizer.max_token_value + 1
-
-    # build model
-    model = model_type(
-        vocab_size,
-        context_length,
-        num_layers,
-        dim,
-        num_heads,
-        d_ff,
-        attn_pdrop, 
-        residual_pdrop
-    ).to(device)
+    # get device
+    device = next(model.parameters()).device
 
     # build optimizer
     optimizer = AdamW(
@@ -128,7 +108,7 @@ def train(
     # create/load the checkpoint
     lab = ELab(
         ckpt_folder, 
-        ckpt_name=ckpt_name,
+        version_name=load_version_name,
         model = model,
         optimizer = optimizer,
         default_states={
@@ -143,17 +123,18 @@ def train(
     # set the learning rate scheduler
     scheduler = CosineAnnealingWarmRestarts(optimizer, T_0 = T_c, T_mult = 1, eta_min = lr_min) # type: ignore
 
-    # create the tensorboard writer
-    writer = SummaryWriter(ckpt_folder, flush_secs=5, max_queue=1)
-
     # create the dataloader
     dataloader = DataLoader(ds, batch_size=batch_size, shuffle=True)    # type: ignore
     
     # create the loss function
     criterion = torch.nn.CrossEntropyLoss()
 
+    # tensorboard logger
+    writer = SummaryWriter(lab.folder_path)
+
     try:
-        for batch in tqdm(dataloader):            
+        for batch in tqdm(dataloader):
+                
             # set the learning rate
             scheduler.step(t)
 
@@ -192,11 +173,12 @@ def train(
             if t % save_interval == 0:
                 lab.states['t'] = t
                 lab.states['proc_token'] = proc_token
-                lab.save('f"{t}.pth"')
+                lab.save(str(t))
 
             writer.add_scalars('loss(step)', log_loss, t)
             writer.add_scalars('loss(token)', log_loss, proc_token)
             writer.add_scalar('raw_grad_norm', raw_grad_norm, t)
+            writer.add_scalar('lr', lr, t)
             writer.flush()
 
             if proc_token_limit is not None and proc_token > proc_token_limit:
@@ -207,7 +189,7 @@ def train(
     except KeyboardInterrupt:
         lab.states['t'] = t
         lab.states['proc_token'] = proc_token
-        lab.save(f"{t}.pth")
+        lab.save(str(t))
         
     
     
