@@ -56,6 +56,7 @@ def get_batched_inputs_targets(encodings: list[list[int]], context_length: int, 
             target = encoding[1:encoding_len] + [PADDING_ID] * padding_number
 
         else:
+            # if the text is longer than the batch_seq_len, we randomly select a part of the text (include the last token)
             id_start = random.randint(0, encoding_len - batch_seq_len - 1)
             input_id = encoding[id_start: id_start + batch_seq_len]
             target = encoding[id_start + 1: id_start + batch_seq_len + 1]
@@ -93,7 +94,8 @@ def train(
     
     # build tokenizer
     tokenizer = tiktoken.get_encoding("cl100k_base")
-    PADDING_ID=tokenizer.eot_token
+    PADDING_ID = tokenizer.eot_token
+    EOT_ID = tokenizer.eot_token
 
     # get device
     device = next(model.parameters()).device
@@ -122,9 +124,6 @@ def train(
     
     # set the learning rate scheduler
     scheduler = CosineAnnealingWarmRestarts(optimizer, T_0 = T_c, T_mult = 1, eta_min = lr_min) # type: ignore
-
-    # create the dataloader
-    dataloader = DataLoader(ds, batch_size=batch_size, shuffle=True)    # type: ignore
     
     # create the loss function
     criterion = torch.nn.CrossEntropyLoss()
@@ -133,60 +132,67 @@ def train(
     writer = SummaryWriter(lab.folder_path)
 
     try:
-        for batch in tqdm(dataloader):
-                
-            # set the learning rate
-            scheduler.step(t)
+        while True:
+            # create the dataloader
+            dataloader = DataLoader(ds.shuffle(), batch_size=batch_size, shuffle=True)    # type: ignore
 
-            # get the learning rate
-            lr = optimizer.param_groups[0]['lr']
+            for batch in tqdm(dataloader):
+                    
+                # set the learning rate
+                scheduler.step(t)
 
-            encodings = [tokenizer.encode(text, allowed_special='all') for text in batch['text']]
+                # get the learning rate
+                lr = optimizer.param_groups[0]['lr']
 
-            inputs, targets = get_batched_inputs_targets(encodings, context_length, PADDING_ID)
-            inputs = torch.tensor(inputs, dtype=torch.long, device = device)
-            targets = torch.tensor(targets, dtype=torch.long, device = device)
+                encodings = [tokenizer.encode(text, allowed_special='all') + [EOT_ID] for text in batch['text']]
 
-            logits = model(inputs)
+                inputs, targets = get_batched_inputs_targets(encodings, context_length, PADDING_ID)
+                inputs = torch.tensor(inputs, dtype=torch.long, device = device)
+                targets = torch.tensor(targets, dtype=torch.long, device = device)
 
-            loss = criterion(logits.reshape(-1, logits.size(-1)), targets.reshape(-1))
-            loss.backward()
+                logits = model(inputs)
 
-            # calculate and log the raw gradient norm
-            raw_grad_norm = elab.get_grad_norm(model)
+                loss = criterion(logits.reshape(-1, logits.size(-1)), targets.reshape(-1))
+                loss.backward()
 
-            if max_grad_l2norm:
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_l2norm)
+                # calculate and log the raw gradient norm
+                raw_grad_norm = elab.get_grad_norm(model)
 
-            optimizer.step()
-            optimizer.zero_grad()
+                if max_grad_l2norm:
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_l2norm)
 
-            proc_token += context_length * batch_size
+                optimizer.step()
+                optimizer.zero_grad()
+
+                proc_token += context_length * batch_size
 
 
-            print(f"{ckpt_folder}\tStep {t}\ttokens: {proc_token:,}\tlr: {lr:.7f}\tloss: {loss.item():.3f}")
+                print(f"{ckpt_folder}\tStep {t}\ttokens: {proc_token:,}\tlr: {lr:.7f}\tloss: {loss.item():.3f}")
 
-            log_loss = {
-                'train': loss.item()
-            }
+                log_loss = {
+                    'train': loss.item()
+                }
 
-            if t % save_interval == 0:
-                lab.states['t'] = t
-                lab.states['proc_token'] = proc_token
-                lab.save(str(t))
+                if t % save_interval == 0:
+                    lab.states['t'] = t
+                    lab.states['proc_token'] = proc_token
+                    lab.save(str(t))
 
-            writer.add_scalars('loss(step)', log_loss, t)
-            writer.add_scalars('loss(token)', log_loss, proc_token)
-            writer.add_scalar('raw_grad_norm', raw_grad_norm, t)
-            writer.add_scalar('lr', lr, t)
-            writer.flush()
+                writer.add_scalars('loss(step)', log_loss, t)
+                writer.add_scalars('loss(token)', log_loss, proc_token)
+                writer.add_scalar('raw_grad_norm', raw_grad_norm, t)
+                writer.add_scalar('lr', lr, t)
+                writer.flush()
 
-            if proc_token_limit is not None and proc_token > proc_token_limit:
-                raise KeyboardInterrupt()
+                if proc_token_limit is not None and proc_token > proc_token_limit:
+                    raise KeyboardInterrupt()
 
-            t += 1
-    
+                t += 1
+
     except KeyboardInterrupt:
+        print("Training interrupted.")
+
+    finally:
         lab.states['t'] = t
         lab.states['proc_token'] = proc_token
         lab.save(str(t))
