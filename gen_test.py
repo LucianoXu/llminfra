@@ -55,7 +55,8 @@ if __name__ == "__main__":
             d_ff = 2048,
             device='cpu'
         ),
-        ckpt_folder='./ckpt/tinystories/V6'
+        ckpt_folder='./ckpt/wikija/V1',
+        # prompt="北越急行ほくほく線は、新潟県南魚沼市の六日町駅を起点とし、新潟県上越市の犀潟駅までを結ぶ、北越急行が運営する鉄道路線である。"
     )
 
     # gen_test_batched(

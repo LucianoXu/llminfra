@@ -18,15 +18,15 @@ def trainV1():
         dim = 512,
         num_heads = 16,
         d_ff = 2048,
-        device='mps'
+        device='cuda'
     ),
 
     context_length = 256,
 
     # optimizer
     lr_min = 2e-4, 
-    lr_max = 4e-3,
-    T_c = 37500,
+    lr_max = 5e-4,
+    T_c = 50000,
     weight_decay = 0.1, 
     betas = (0.9, 0.99), 
     eps = 1e-8,
@@ -34,7 +34,7 @@ def trainV1():
     # training setting:
     load_version_name = 'none',
     batch_size = 32,
-    save_interval = 37500,
+    save_interval = 50000,
     max_grad_l2norm = 1.0,
     # proc_token_limit=327_680_000,
     proc_token_limit=None
