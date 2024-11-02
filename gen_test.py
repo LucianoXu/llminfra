@@ -16,7 +16,7 @@ def gen_test(
     p_threshold = 0.95,
 ):
     tokenizer = tiktoken.get_encoding('cl100k_base')
-    lab = ELab(ckpt_folder, 'latest', model=model)
+    lab = ELab(ckpt_folder, '50000', model=model)
 
     prompt_ids = tokenizer.encode(prompt)
     res = generate(model, prompt_ids, max_len=context_length, EOT_id = tokenizer.eot_token, T=T, p_threshold=p_threshold, include_prompt=True, show_progress=True)
@@ -48,15 +48,19 @@ if __name__ == "__main__":
     gen_test(
         model = Llama3(
             vocab_size = vocab_size,
-            context_length = 256,
+            context_length = 512,
             num_layers = 4,
             dim = 512,
             num_heads = 16,
             d_ff = 2048,
-            device='cpu'
+            device='cuda'
         ),
         ckpt_folder='./ckpt/wikija/V1',
-        # prompt="北越急行ほくほく線は、新潟県南魚沼市の六日町駅を起点とし、新潟県上越市の犀潟駅までを結ぶ、北越急行が運営する鉄道路線である。"
+        context_length=512,
+        prompt="埼玉県南東部の市。県庁所在地。平成13年（2001）浦和、大宮、与野の3市が合併して成立。平成15年（2003）指定都市。平成17年（2005）に岩槻市を編入。人口122.3万（2010）。",
+
+        T=0.4,
+        p_threshold=0.95
     )
 
     # gen_test_batched(

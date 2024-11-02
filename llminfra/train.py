@@ -87,6 +87,7 @@ def train(
         # training setting:
         load_version_name: str|Literal['latest', 'none'] = 'none',
         batch_size: int = 8,
+        accumulation_step: int = 1,
         save_interval: int = 10000,
         max_grad_l2norm: Optional[float] = None,
         proc_token_limit: Optional[int] = None
@@ -133,11 +134,14 @@ def train(
 
     try:
         while True:
+
             # create the dataloader
             dataloader = DataLoader(ds.shuffle(), batch_size=batch_size, shuffle=True)    # type: ignore
 
+            accumulated_loss = 0.
+            i = -1
             for batch in tqdm(dataloader):
-                    
+                i += 1  
                 # set the learning rate
                 scheduler.step(t)
 
@@ -155,40 +159,44 @@ def train(
                 loss = criterion(logits.reshape(-1, logits.size(-1)), targets.reshape(-1))
                 loss.backward()
 
-                # calculate and log the raw gradient norm
-                raw_grad_norm = elab.get_grad_norm(model)
-
-                if max_grad_l2norm:
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_l2norm)
-
-                optimizer.step()
-                optimizer.zero_grad()
-
+                accumulated_loss += loss.item()
                 proc_token += context_length * batch_size
 
+                if (i + 1) % accumulation_step == 0:
 
-                print(f"{ckpt_folder}\tStep {t}\ttokens: {proc_token:,}\tlr: {lr:.7f}\tloss: {loss.item():.3f}")
+                    avg_los = accumulated_loss/accumulation_step
+                    t += 1
+                    # calculate and log the raw gradient norm
+                    raw_grad_norm = elab.get_grad_norm(model)
 
-                log_loss = {
-                    'train': loss.item()
-                }
+                    if max_grad_l2norm:
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_l2norm)
 
-                if t % save_interval == 0:
-                    lab.states['t'] = t
-                    lab.states['proc_token'] = proc_token
-                    lab.save(str(t))
+                    optimizer.step()
+                    optimizer.zero_grad()
 
-                writer.add_scalars('loss(step)', log_loss, t)
-                writer.add_scalars('loss(token)', log_loss, proc_token)
-                writer.add_scalar('raw_grad_norm', raw_grad_norm, t)
-                writer.add_scalar('lr', lr, t)
-                writer.flush()
 
-                if proc_token_limit is not None and proc_token > proc_token_limit:
-                    raise KeyboardInterrupt()
+                    print(f"{ckpt_folder}\tStep {t}\ttokens: {proc_token:,}\tlr: {lr:.7f}\tloss: {avg_los:.3f}")
+                    accumulated_loss = 0.
 
-                t += 1
+                    log_loss = {
+                        'train': avg_los
+                    }
 
+                    writer.add_scalars('loss(step)', log_loss, t)
+                    writer.add_scalars('loss(token)', log_loss, proc_token)
+                    writer.add_scalar('raw_grad_norm', raw_grad_norm, t)
+                    writer.add_scalar('lr', lr, t)
+                    writer.flush()
+
+                    if t % save_interval == 0:
+                        lab.states['t'] = t
+                        lab.states['proc_token'] = proc_token
+                        lab.save(str(t))
+
+                    if proc_token_limit is not None and proc_token > proc_token_limit:
+                        raise KeyboardInterrupt()
+                
     except KeyboardInterrupt:
         print("Training interrupted.")
 
