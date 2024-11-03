@@ -80,7 +80,7 @@ def train(
         lr_min: float, 
         lr_max: float,
         T_c: int,
-        weight_decay, 
+        weight_decay: float, 
         betas: tuple[float, float], 
         eps = 1e-8,
         
@@ -109,6 +109,7 @@ def train(
     )
 
     # create/load the checkpoint
+    # here t represents the next step number to be executed
     lab = ELab(
         ckpt_folder, 
         version_name=load_version_name,
@@ -119,6 +120,10 @@ def train(
             'proc_token': 0
         }
     )
+
+    # reset all gradients
+    model.train()
+    optimizer.zero_grad()
 
     t: int = lab.states['t']
     proc_token: int = lab.states['proc_token']
@@ -165,7 +170,6 @@ def train(
                 if (i + 1) % accumulation_step == 0:
 
                     avg_los = accumulated_loss/accumulation_step
-                    t += 1
                     # calculate and log the raw gradient norm
                     raw_grad_norm = elab.get_grad_norm(model)
 
@@ -183,11 +187,15 @@ def train(
                         'train': avg_los
                     }
 
+
                     writer.add_scalars('loss(step)', log_loss, t)
                     writer.add_scalars('loss(token)', log_loss, proc_token)
                     writer.add_scalar('raw_grad_norm', raw_grad_norm, t)
                     writer.add_scalar('lr', lr, t)
                     writer.flush()
+
+                    # go to next step
+                    t += 1
 
                     if t % save_interval == 0:
                         lab.states['t'] = t

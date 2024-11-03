@@ -32,7 +32,7 @@ def trainV2():
     eps = 1e-8,
     
     # training setting:
-    load_version_name = 'none',
+    load_version_name = 'latest',
     batch_size = 9,
     accumulation_step = 8,
     save_interval = 50000,
