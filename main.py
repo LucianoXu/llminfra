@@ -33,8 +33,8 @@ def trainV2():
     
     # training setting:
     load_version_name = 'latest',
-    batch_size = 9,
-    accumulation_step = 8,
+    batch_size = 7,
+    accumulation_step = 11,
     save_interval = 50000,
     max_grad_l2norm = 1.0,
     # proc_token_limit=327_680_000,

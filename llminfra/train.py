@@ -143,7 +143,7 @@ def train(
             # create the dataloader
             dataloader = DataLoader(ds.shuffle(), batch_size=batch_size, shuffle=True)    # type: ignore
 
-            accumulated_loss = 0.
+            avg_loss = 0.
             i = -1
             for batch in tqdm(dataloader):
                 i += 1  
@@ -161,15 +161,15 @@ def train(
 
                 logits = model(inputs)
 
-                loss = criterion(logits.reshape(-1, logits.size(-1)), targets.reshape(-1))
+                # devided by accumulation_step because the loss is accumulated
+                loss = criterion(logits.reshape(-1, logits.size(-1)), targets.reshape(-1)) / accumulation_step
                 loss.backward()
 
-                accumulated_loss += loss.item()
+                avg_loss += loss.item()
                 proc_token += context_length * batch_size
 
                 if (i + 1) % accumulation_step == 0:
 
-                    avg_los = accumulated_loss/accumulation_step
                     # calculate and log the raw gradient norm
                     raw_grad_norm = elab.get_grad_norm(model)
 
@@ -180,11 +180,10 @@ def train(
                     optimizer.zero_grad()
 
 
-                    print(f"{ckpt_folder}\tStep {t}\ttokens: {proc_token:,}\tlr: {lr:.7f}\tloss: {avg_los:.3f}")
-                    accumulated_loss = 0.
+                    print(f"{ckpt_folder}\tStep {t}\ttokens: {proc_token:,}\tlr: {lr:.7f}\tloss: {avg_loss:.3f}")
 
                     log_loss = {
-                        'train': avg_los
+                        'train': avg_loss
                     }
 
 
@@ -195,6 +194,7 @@ def train(
                     writer.flush()
 
                     # go to next step
+                    avg_loss = 0.
                     t += 1
 
                     if t % save_interval == 0:
