@@ -6,18 +6,15 @@ tok = tiktoken.get_encoding('cl100k_base')
 vocab_size = tok.max_token_value + 1
 
 def trainV2():
+    args = Llama3ModelArgs()
+    args.vocab_size = vocab_size
     train(
     ds = load_dataset("wikimedia/wikipedia", "20231101.ja", split="train").shuffle(),
     ckpt_folder = './ckpt/wikija/V2',
 
     # model
     model=Llama3(
-        vocab_size = vocab_size,
-        context_length = 512,
-        num_layers = 10,
-        dim = 768,
-        num_heads = 16,
-        d_ff = 3072,
+        model_args=args,
         device='cuda'
     ),
 

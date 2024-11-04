@@ -52,14 +52,11 @@ def gen_test_batched(
         print()
 
 if __name__ == "__main__":
+    args = Llama3ModelArgs()
+    args.vocab_size = vocab_size
     gen_test(
         model = Llama3(
-            vocab_size = vocab_size,
-            context_length = 512,
-            num_layers = 10,
-            dim = 768,
-            num_heads = 16,
-            d_ff = 3072,
+            model_args=args,
             device='cuda'
         ),
         ckpt_folder = './ckpt/wikija/V2',

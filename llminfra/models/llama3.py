@@ -9,18 +9,17 @@ from torch import nn
 
 
 @dataclass
-class ModelArgs:
-    dim: int = 256 * 4
-    n_layers: int = 16
-    n_heads: int = 32
-    n_kv_heads: int = 8
-    vocab_size: int = 128256
-    multiple_of: int = 256  # make SwiGLU hidden layer size multiple of large power of 2
-    ffn_dim_multiplier: float = 1.5
+class Llama3ModelArgs:
+    dim: int = 768
+    n_layers: int = 10
+    n_heads: int = 16
+    n_kv_heads: int = 16
+    vocab_size: int = 0
+    d_ff: int = 768 * 4
     norm_eps: float = 1e-5
-    rope_theta: float = 50000.0
+    rope_theta: float = 10000.0
 
-    context_length: int = 2048
+    context_length: int = 512
 
 class RMSNorm(torch.nn.Module):
     def __init__(self, dim: int, eps: float = 1e-6, device: str = 'cpu'):
@@ -50,14 +49,6 @@ def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0, device = 'c
     return freq_cis
 
 
-def reshape_for_broadcast(freqs_cis: torch.Tensor, x: torch.Tensor):
-    ndim = x.ndim
-    assert 0 <= 1 < ndim
-    assert freqs_cis.shape == (x.shape[1], x.shape[-1])
-    shape = [d if i == 1 or i == ndim - 1 else 1 for i, d in enumerate(x.shape)]
-    return freqs_cis.view(*shape)
-
-
 def apply_rotary_emb(
     xq: torch.Tensor,
     xk: torch.Tensor,
@@ -65,7 +56,14 @@ def apply_rotary_emb(
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     xq_ = torch.view_as_complex(xq.float().reshape(*xq.shape[:-1], -1, 2))
     xk_ = torch.view_as_complex(xk.float().reshape(*xk.shape[:-1], -1, 2))
-    freqs_cis = reshape_for_broadcast(freqs_cis, xq_)
+
+    # slice and reshape freqs_cis
+    ndim = xq_.ndim
+    assert 0 <= 1 < ndim, "xq, xk must have at least 2 dimensions"
+    assert freqs_cis.shape == (xq_.shape[1], xq_.shape[-1]), "freqs_cis shape mismatch"
+    freqs_cis_shape = [d if i == 1 or i == ndim - 1 else 1 for i, d in enumerate(xq_.shape)]
+    freqs_cis = freqs_cis.view(*freqs_cis_shape)
+
     xq_out = torch.view_as_real(xq_ * freqs_cis).flatten(3)
     xk_out = torch.view_as_real(xk_ * freqs_cis).flatten(3)
     return xq_out.type_as(xq), xk_out.type_as(xk)
@@ -169,16 +167,9 @@ class FeedForward(nn.Module):
         self,
         dim: int,
         hidden_dim: int,
-        multiple_of: int,
-        ffn_dim_multiplier: Optional[float],
         device = 'cpu'
     ):
         super().__init__()
-        hidden_dim = int(2 * hidden_dim / 3)
-        # custom dim factor multiplier
-        if ffn_dim_multiplier is not None:
-            hidden_dim = int(ffn_dim_multiplier * hidden_dim)
-        hidden_dim = multiple_of * ((hidden_dim + multiple_of - 1) // multiple_of)
 
         self.w1 = nn.Linear(
             dim, hidden_dim, bias=False, device = device
@@ -209,9 +200,7 @@ class TransformerBlock(nn.Module):
         self.attention = Attention(args, device)
         self.feed_forward = FeedForward(
             dim=args.dim,
-            hidden_dim=4 * args.dim,
-            multiple_of=args.multiple_of,
-            ffn_dim_multiplier=args.ffn_dim_multiplier,
+            hidden_dim=args.d_ff,
             device = device
         )
         self.attention_norm = RMSNorm(args.dim, eps=args.norm_eps, device = device)
@@ -235,47 +224,40 @@ class TransformerBlock(nn.Module):
 
 
 class Llama3(nn.Module):
-    def __init__(self, 
-                 vocab_size: int,
-                 context_length: int,
-                 dim: int,
-                 num_layers: int,
-                 num_heads: int,
-                 d_ff: int,
+    def __init__(self,
+                 model_args: ModelArgs,
                  device: str = 'cpu'):
         
         super().__init__()
 
-        params = ModelArgs()
-        params.dim = dim
-        params.vocab_size = vocab_size
-        params.n_layers = num_layers
-        params.n_heads = num_heads
-        params.ffn_dim_multiplier = d_ff / dim
-        params.context_length = context_length
+        # check that dim is a multiple of n_heads
+        assert model_args.dim % model_args.n_heads == 0, "dim must be a multiple of n_heads"
 
-        self.params = params
-        self.vocab_size = params.vocab_size
-        self.n_layers = params.n_layers
+        # check that n_heads is a multiple of n_kv_heads
+        assert model_args.n_heads % model_args.n_kv_heads == 0, "n_heads must be a multiple of n_kv_heads"
+
+        self.model_args = model_args
+        self.vocab_size = model_args.vocab_size
+        self.n_layers = model_args.n_layers
 
         self.tok_embeddings = nn.Embedding(
-            params.vocab_size, params.dim, device=device
+            model_args.vocab_size, model_args.dim, device=device
         )
 
         self.layers = torch.nn.ModuleList()
 
-        for layer_id in range(params.n_layers):
-            self.layers.append(TransformerBlock(layer_id, params, device=device))
+        for layer_id in range(model_args.n_layers):
+            self.layers.append(TransformerBlock(layer_id, model_args, device=device))
 
-        self.norm = RMSNorm(params.dim, eps=params.norm_eps, device=device)
+        self.norm = RMSNorm(model_args.dim, eps=model_args.norm_eps, device=device)
         self.output = nn.Linear(
-            params.dim, params.vocab_size, bias=False, device=device
+            model_args.dim, model_args.vocab_size, bias=False, device=device
         )
 
         freqs_cis = precompute_freqs_cis(
-            dim=params.dim // params.n_heads,
-            end=params.context_length * 2,
-            theta=params.rope_theta,
+            dim=model_args.dim // model_args.n_heads,
+            end=model_args.context_length,
+            theta=model_args.rope_theta,
             device=device
         )
 
@@ -304,9 +286,11 @@ class Llama3(nn.Module):
 
 
     def forward(self, tokens: torch.Tensor, attention_masks: Optional[torch.Tensor] = None):
-        _bsz, seqlen = tokens.shape
+        # check sequence length
+        assert tokens.shape[1] <= self.model_args.context_length, "sequence length exceeds context length"
+        seqlen = tokens.shape[1]
         h = self.tok_embeddings(tokens)
-        freqs_cis = self.freqs_cis[: seqlen]
+        freqs_cis = self.freqs_cis[:seqlen]
 
 
         mask = torch.full((seqlen, seqlen), float("-inf"), device=self.device)

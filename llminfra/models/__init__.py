@@ -1,2 +1,2 @@
 from .vanilla import Vanilla
-from .llama3 import Llama3
+from .llama3 import Llama3, Llama3ModelArgs
