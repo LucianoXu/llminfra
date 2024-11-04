@@ -9,7 +9,7 @@ from torch import nn
 
 
 @dataclass
-class Llama3ModelArgs:
+class ModelArgs:
     dim: int = 768
     n_layers: int = 10
     n_heads: int = 16
