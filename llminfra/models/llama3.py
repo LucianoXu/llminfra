@@ -305,7 +305,7 @@ class Llama3(nn.Module):
             # Convert attention mask from (batch_size, seq_len) to (batch_size, 1, 1, seq_len)
             attention_masks = attention_masks[:, None, None, :]
             padding_mask = torch.where(attention_masks == 0, 
-                torch.tensor(-1e-9, device=self.device),
+                torch.tensor(-1e9, device=self.device),
                 torch.tensor(0.0, device=self.device))
             mask = mask[None, None, :, :]
             mask = mask + padding_mask
